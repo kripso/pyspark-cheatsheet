@@ -1,4 +1,4 @@
-# 🐍 📄 PySpark Cheat Sheet
+# 🐍📄
 
 A quick reference guide to the most commonly used patterns and functions in PySpark SQL.
 
@@ -24,12 +24,75 @@ A quick reference guide to the most commonly used patterns and functions in PySp
 If you can't find what you're looking for, check out the [PySpark Official Documentation](https://spark.apache.org/docs/latest/api/python/pyspark.sql.html) and add it here!
 
 ## Common Patterns
+#### Initialize Spark Session
+
+Follow the [link](https://spark.apache.org/docs/latest/configuration.html) for more info about configuration properties and their default values.
+```python
+from pyspark.sql import SparkSession
+from pyspark import SparkConf
+
+spark = SparkSession.builder.config(
+    conf=(
+        SparkConf()
+        .setAppName("My-Spark-Application")
+        .setMaster("local[*]")
+        # .setMaster("spark://spark-master:7077")
+        .set("spark.files.overwrite", "true")
+        .set("spark.dynamicAllocation.enabled", "true")
+        .set("spark.dynamicAllocation.minExecutors","1")
+        .set("spark.dynamicAllocation.maxExecutors","6")
+        .set("spark.executor.memory", "4g")
+        .set("spark.executor.cores", "2")
+        .set("spark.driver.memory", "8g")
+        .set("spark.driver.cores", "1")
+        .set("spark.cores.max", "20")
+    )
+).getOrCreate()
+```
+
+```python
+from pyspark.sql import SparkSession
+from pyspark import SparkConf
+
+spark = SparkSession.builder.config(
+    conf=(
+        SparkConf()
+        .setAppName("My-Spark-Application")
+        .setMaster("local[*]")
+        # .setMaster("spark://spark-master:7077")
+        .set("spark.executor.instances", "2")
+        .set("spark.executor.memory", "2g")
+        .set("spark.executor.cores", "2")
+        .set("spark.driver.memory", "4g")
+        .set("spark.driver.cores", "1")
+        .set("spark.cores.max", "4")
+    )
+).getOrCreate()
+```
+
+Verify configuration values
+
+```python
+print(
+    "\n",
+    f'spark.files.overwrite:    {spark.sparkContext.getConf().get("spark.files.overwrite")}\n',
+    f'spark.executor.instances: {spark.sparkContext.getConf().get("spark.executor.instances")}\n',
+    f'spark.executor.memory:    {spark.sparkContext.getConf().get("spark.executor.memory")}\n',
+    f'spark.executor.cores:     {spark.sparkContext.getConf().get("spark.executor.cores")}\n',
+    f'spark.driver.memory:      {spark.sparkContext.getConf().get("spark.driver.memory")}\n',
+    f'spark.driver.cores:       {spark.sparkContext.getConf().get("spark.driver.cores")}\n',
+    f'spark.cores.max:          {spark.sparkContext.getConf().get("spark.cores.max")}\n',
+    "\n",
+)
+```
 
 #### Importing Functions & Types
 
 ```python
 # Easily reference these as F.my_function() and T.my_type() below
-from pyspark.sql import functions as F, types as T
+from pyspark.sql import types as T
+from pyspark.sql import Window as W
+from pyspark.sql import functions as F
 ```
 
 #### Filtering
@@ -48,8 +111,8 @@ df = df.filter((df.age > 25) & (df.is_adult == 'Y'))
 df = df.filter(col('first_name').isin([3, 4, 7]))
 
 # Sort results
-df = df.orderBy(df.age.asc()))
-df = df.orderBy(df.age.desc()))
+df = df.orderBy(df.age.asc())
+df = df.orderBy(df.age.desc())
 ```
 
 #### Joins
@@ -84,9 +147,14 @@ df = lookup_and_replace(people, pay_codes, id, pay_code_id, pay_code_desc)
 df = df.withColumn('status', F.lit('PASS'))
 
 # Construct a new dynamic column
-df = df.withColumn('full_name', F.when(
-    (df.fname.isNotNull() & df.lname.isNotNull()), F.concat(df.fname, df.lname)
-).otherwise(F.lit('N/A'))
+condition = (
+	F.when((df.fname.isNotNull() & df.lname.isNotNull()), F.concat(df.fname, df.lname))
+	.otherwise(F.lit('N/A'))
+)
+df = (
+	df
+	.withColumn('full_name', condition)
+)
 
 # Pick which columns to keep, optionally rename some
 df = df.select(
@@ -287,16 +355,34 @@ df = df.withColumn('unique_elements', F.array_distinct('my_array'))
 # Max of Rows in Group:     F.max(*cols)
 # Min of Rows in Group:     F.min(*cols)
 # First Row in Group:       F.alias(*cols)
-df = df.groupBy('gender').agg(F.max('age').alias('max_age_by_gender'))
+df = (
+	df
+	.groupBy('gender')
+	.agg(
+		F.max('age').alias('max_age_by_gender'),
+		F.min('age').alias('min_age_by_gender'),
+		F.mean('age').alias('mean_age_by_gender'),
+	)
+)
 
 # Collect a Set of all Rows in Group:       F.collect_set(col)
 # Collect a List of all Rows in Group:      F.collect_list(col)
-df = df.groupBy('age').agg(F.collect_set('name').alias('person_names'))
+df = (
+	df
+	.groupBy('age')
+	.agg(F.collect_set('name').alias('person_names'))
+)
 
-# Just take the lastest row for each combination (Window Functions)
-from pyspark.sql import Window as W
-
-window = W.partitionBy("first_name", "last_name").orderBy(F.desc("date"))
+window = (
+	W
+	.partitionBy(
+		"first_name",
+		"last_name"
+	)
+	.orderBy(
+		F.desc("date")
+	)
+)
 df = df.withColumn("row_number", F.row_number().over(window))
 df = df.filter(F.col("row_number") == 1)
 df = df.drop("row_number")
@@ -304,11 +390,14 @@ df = df.drop("row_number")
 
 ## Advanced Operations
 
-#### Repartitioning
+#### Repartition/Coalesce
 
 ```python
-# Repartition – df.repartition(num_output_partitions)
+# df.repartition(num_output_partitions) -> used to increase/decrease the number of partitions
 df = df.repartition(1)
+
+# df.coalesce(num_output_partitions) -> used to decrease the number of partitions
+df = df.coalesce(1)
 ```
 
 #### UDFs (User Defined Functions
@@ -324,3 +413,6 @@ import random
 random_name_udf = F.udf(lambda: random.choice(['Bob', 'Tom', 'Amy', 'Jenna']))
 df = df.withColumn('name', random_name_udf())
 ```
+
+#### Map Partition
+
